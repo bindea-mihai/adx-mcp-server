@@ -1,0 +1,19 @@
+services:
+  adx-mcp-server:
+    # This tells Docker where to push to or pull from
+    image: ${MCP_IMAGE_NAME}
+    # Keep 'build' to enable 'docker compose build' & 'docker compose push'
+    # Remove 'build' if this file is only for running on the server
+    build: .
+    
+    container_name: adx-mcp-server
+    env_file:
+      - .env
+    environment:
+      # FORCE HTTP MODE
+      - ADX_MCP_SERVER_TRANSPORT=http
+      # Set bind host and port for the MCP server
+      - ADX_MCP_BIND_HOST=0.0.0.0
+      - ADX_MCP_BIND_PORT=3000
+    ports:
+      - "3000:3000"

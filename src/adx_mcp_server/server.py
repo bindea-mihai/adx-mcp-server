@@ -2,14 +2,18 @@
 
 import os
 import json
+import logging
 from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
 
 import dotenv
 from fastmcp import FastMCP
-from azure.identity import DefaultAzureCredential, WorkloadIdentityCredential
+from azure.identity import DefaultAzureCredential, WorkloadIdentityCredential, ClientSecretCredential
 from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 dotenv.load_dotenv()
 mcp = FastMCP("Azure Data Explorer MCP")
@@ -59,17 +63,33 @@ config = ADXConfig(
     )
 )
 
+# NOTE: N8N Parameter Filtering
+# N8N sometimes sends a 'toolCallId' parameter that is not expected by tools.
+# FastMCP 2.11.3+ does not support middleware for parameter filtering.
+# If N8N compatibility issues arise, consider:
+# 1. Upgrading to a FastMCP version with middleware support
+# 2. Implementing parameter filtering at the tool level using **kwargs
+# 3. Configuring N8N to not send the toolCallId parameter
+
 def get_kusto_client() -> KustoClient:
-    # Get tenant and client IDs from environment variables
+    # Get authentication credentials from environment variables
     tenant_id = os.environ.get('AZURE_TENANT_ID')
     client_id = os.environ.get('AZURE_CLIENT_ID')
+    client_secret = os.environ.get('AZURE_CLIENT_SECRET')
     token_file_path = os.environ.get('ADX_TOKEN_FILE_PATH', '/var/run/secrets/azure/tokens/azure-identity-token')
     
-    # Check if we have the necessary credentials for WorkloadIdentityCredential
-    if tenant_id and client_id:
+    # Priority 1: Service Principal with Client Secret
+    if tenant_id and client_id and client_secret:
+        print(f"Using ClientSecretCredential with client_id: {client_id}")
+        credential = ClientSecretCredential(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret
+        )
+    # Priority 2: Workload Identity (Kubernetes)
+    elif tenant_id and client_id and not client_secret:
         print(f"Using WorkloadIdentityCredential with client_id: {client_id}")
         try:
-            # Use WorkloadIdentityCredential as the default option
             credential = WorkloadIdentityCredential(
                 tenant_id=tenant_id,
                 client_id=client_id,
@@ -79,9 +99,9 @@ def get_kusto_client() -> KustoClient:
             print(f"Error initializing WorkloadIdentityCredential: {str(e)}")
             print("Falling back to DefaultAzureCredential")
             credential = DefaultAzureCredential()
+    # Priority 3: Default Azure Credential (Managed Identity, Azure CLI, etc.)
     else:
-        # Fall back to DefaultAzureCredential if tenant_id or client_id is missing
-        print("Missing tenant_id or client_id, using DefaultAzureCredential")
+        print("Using DefaultAzureCredential (Managed Identity, Azure CLI, etc.)")
         credential = DefaultAzureCredential()
     
     kcsb = KustoConnectionStringBuilder.with_azure_token_credential(
